@@ -3,6 +3,7 @@ import { ctx, q, today, addDays, br, dloc, fmtMin, getSubjects, form, run, empty
 import { $, esc, toast } from './ui.js';
 import { award, refresh } from './gamify.js';
 import { line } from './charts.js';
+import { setStudying } from './presence.js';
 
 const E = { subject: '', period: '' };
 export async function exercicios(view) {
@@ -91,23 +92,26 @@ export async function sessoes(view) {
   const fill = () => { const sid = $('#ss', view).value; $('#st', view).innerHTML = '<option value="">— Nenhum —</option>' + topics.filter(x => !sid || x.subject_id === sid).map(x => `<option value="${x.id}" ${x.id === T.topic_id ? 'selected' : ''}>${esc(x.title)}</option>`).join(''); };
   fill(); paint(); $('#ss', view).onchange = fill;
   const reload = () => sessoes(view);
-  $('#go', view).onclick = () => {
+  $('#go', view).onclick = async () => {
     if (!T.started) {
       const w = Number($('#sw', view).value), bk = Number($('#sb', view).value);
       if (!(w >= 1 && w <= 120 && bk >= 1 && bk <= 60)) return toast('Informe tempos válidos para o Pomodoro (foco 1–120, pausa 1–60 min).', 'error');
       Object.assign(T, { started: new Date().toISOString(), study: 0, phaseMs: 0, phase: 'work', mode: $('#sm', view).value, subject_id: $('#ss', view).value || null, topic_id: $('#st', view).value || null, work: w, brk: bk });
       try { localStorage.setItem('sv-pomo', JSON.stringify({ work: w, brk: bk })); } catch {}
+      const { error: se } = await sb.rpc('start_study_session', { p_subject: T.subject_id, p_topic: T.topic_id, p_mode: T.mode });
+      if (se) { T.started = null; return toast('Não foi possível iniciar a sessão. Verifique a conexão e se o social.sql foi executado.', 'error'); }
     }
-    if (T.run) { tick(); T.run = false; } else { T.run = true; T.last = Date.now(); clearInterval(T.timer); T.timer = setInterval(tick, 500); }
+    if (T.run) { tick(); T.run = false; setStudying(false); } else { T.run = true; T.last = Date.now(); clearInterval(T.timer); T.timer = setInterval(tick, 500); setStudying(true); }
     reload();
   };
   $('#end', view).onclick = async () => {
-    tick(); T.run = false; clearInterval(T.timer); const secs = Math.round(T.study / 1000);
-    if (secs < 60 && !confirm('Sessões com menos de 1 minuto não são registradas. Descartar esta sessão?')) { T.run = true; T.last = Date.now(); T.timer = setInterval(tick, 500); return; }
+    tick(); T.run = false; setStudying(false); clearInterval(T.timer); const secs = Math.round(T.study / 1000);
+    if (secs < 60 && !confirm('Sessões com menos de 1 minuto não são registradas. Descartar esta sessão?')) { T.run = true; T.last = Date.now(); T.timer = setInterval(tick, 500); setStudying(true); return; }
+    if (secs < 60) await sb.rpc('cancel_study_session');
     let xp = 0;
     if (secs >= 60) {
       const ok = await run(async () => {
-        const id = (await q(sb.from('study_sessions').insert({ started_at: T.started, seconds: secs, mode: T.mode, subject_id: T.subject_id, topic_id: T.topic_id }).select('id').single())).id;
+        const id = await q(sb.rpc('finish_study_session', { p_seconds: secs })); if (!id) throw new Error('sessão curta');
         if (T.topic_id) { const tp = await q(sb.from('topics').select('minutes_spent').eq('id', T.topic_id).single()); await q(sb.from('topics').update({ minutes_spent: tp.minutes_spent + Math.round(secs / 60) }).eq('id', T.topic_id)); }
         if (secs >= 300) { const b = ctx.profile.xp; await award('session', 10, id, 5); xp = ctx.profile.xp - b; }
         await refresh();

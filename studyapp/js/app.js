@@ -6,16 +6,18 @@ import { materias, conteudos, revisoes } from './pages_study.js';
 import { calendario } from './pages_calendar.js';
 import { exercicios, sessoes } from './pages_practice.js';
 import { metas, conquistas, estatisticas } from './pages_progress.js';
+import { amigos } from './pages_social.js';
+import { startPresence, stopPresence } from './presence.js';
 import { generateNotifications } from './gamify.js';
 import { $, icon, toast } from './ui.js';
 
 const PAGES = [
   ['inicio', 'Início', 'home'], ['calendario', 'Calendário', 'calendar'], ['materias', 'Minhas matérias', 'book'],
   ['conteudos', 'Conteúdos', 'list'], ['exercicios', 'Exercícios', 'check'], ['sessoes', 'Sessões de estudo', 'clock'],
-  ['metas', 'Metas', 'target'], ['conquistas', 'Conquistas', 'trophy'], ['estatisticas', 'Estatísticas', 'chart'],
+  ['metas', 'Metas', 'target'], ['conquistas', 'Conquistas', 'trophy'], ['amigos', 'Amigos', 'users'], ['estatisticas', 'Estatísticas', 'chart'],
   ['revisoes', 'Revisões', 'refresh'], ['perfil', 'Perfil e configurações', 'user'],
 ];
-const REG = { inicio: dashboard, perfil: profilePage, calendario, materias, conteudos, exercicios, sessoes, metas, conquistas, estatisticas, revisoes };
+const REG = { inicio: dashboard, perfil: profilePage, calendario, materias, conteudos, exercicios, sessoes, metas, conquistas, amigos, estatisticas, revisoes };
 
 function applyTheme(theme, accent) {
   document.documentElement.dataset.theme = theme;
@@ -52,6 +54,8 @@ async function enter(session) {
   if (error || !data) { toast('Não foi possível carregar seu perfil.', 'error'); await sb.auth.signOut(); return; }
   ctx.profile = data; applyTheme(data.theme, data.accent);
   if (!$('#nav-side').children.length) buildNav();
+  try { const z = Intl.DateTimeFormat().resolvedOptions().timeZone; if (z && data.tz !== undefined && z !== data.tz) { await sb.from('profiles').update({ tz: z }).eq('id', data.id); data.tz = z; } } catch {}
+  startPresence();
   try { await generateNotifications(); } catch (e) { console.error(e); }
   show('app'); route();
 }
@@ -62,7 +66,7 @@ if (!configured) {
 } else {
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') { show('auth'); mountAuth('reset'); return; }
-    if (event === 'SIGNED_OUT' || !session) { ctx.profile = null; show('auth'); mountAuth('login'); return; }
+    if (event === 'SIGNED_OUT' || !session) { ctx.profile = null; stopPresence(false); show('auth'); mountAuth('login'); return; }
     if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') setTimeout(() => enter(session), 0);
   });
 }
